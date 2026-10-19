@@ -66,6 +66,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           tag="vulkan-${{ inputs.whisper_ref }}"
           gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" \
