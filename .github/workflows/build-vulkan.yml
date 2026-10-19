@@ -1,0 +1,74 @@
+name: Build whisper.cpp (Vulkan, Windows)
+
+on:
+  workflow_dispatch:
+    inputs:
+      whisper_ref:
+        description: "whisper.cpp tag or commit to build. Keep it equal to ENGINE_TAG in Ughyeah_Tauri's local_whisper.rs."
+        required: true
+        default: "b5454"
+
+permissions:
+  contents: write
+
+env:
+  VULKAN_VERSION: 1.4.363.0
+
+jobs:
+  windows-vulkan:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout whisper.cpp
+        uses: actions/checkout@v4
+        with:
+          repository: ggml-org/whisper.cpp
+          ref: ${{ inputs.whisper_ref }}
+
+      - name: Install Vulkan SDK
+        run: |
+          curl.exe -o $env:RUNNER_TEMP/VulkanSDK-Installer.exe -L "https://sdk.lunarg.com/sdk/download/${env:VULKAN_VERSION}/windows/vulkansdk-windows-X64-${env:VULKAN_VERSION}.exe"
+          & "$env:RUNNER_TEMP\VulkanSDK-Installer.exe" --accept-licenses --default-answer --confirm-command install
+          Add-Content $env:GITHUB_ENV "VULKAN_SDK=C:\VulkanSDK\${env:VULKAN_VERSION}"
+          Add-Content $env:GITHUB_PATH "C:\VulkanSDK\${env:VULKAN_VERSION}\Bin"
+
+      # Same layout as the official CPU zip: one dll per backend, loaded next to the exe at run time.
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DGGML_VULKAN=ON
+          -DGGML_NATIVE=OFF
+          -DGGML_BACKEND_DL=ON
+          -DGGML_CPU_ALL_VARIANTS=ON
+          -DWHISPER_BUILD_TESTS=OFF
+          -DWHISPER_SDL2=OFF
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Collect files
+        shell: bash
+        run: |
+          mkdir dist
+          cp build/bin/Release/whisper-cli.exe dist/
+          cp build/bin/Release/*.dll dist/
+          cp LICENSE dist/LICENSE-whisper.cpp.txt
+          ls -la dist
+
+      - name: Smoke test
+        shell: bash
+        run: ./dist/whisper-cli.exe --help | head -5
+
+      - name: Pack
+        shell: bash
+        run: 7z a whisper-bin-vulkan-x64.zip ./dist/*
+
+      - name: Publish release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="vulkan-${{ inputs.whisper_ref }}"
+          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" \
+            --title "whisper.cpp ${{ inputs.whisper_ref }} (Vulkan, Windows x64)" \
+            --notes "whisper.cpp ${{ inputs.whisper_ref }} built with Vulkan and dynamic CPU backends, for UghYeah."
+          gh release upload "$tag" whisper-bin-vulkan-x64.zip --clobber
